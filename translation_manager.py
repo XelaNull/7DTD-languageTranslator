@@ -99,7 +99,7 @@ from debug_logging import LTLogger
 from rate_limiter import RateLimiter
 from response_parser import ResponseParser
 from statistics_manager import StatisticsManager
-from utils import is_json_complete, clean_json_string, check_exit_flag
+from utils import is_json_complete, clean_json_string, check_exit_flag, truncate_text
 
 class TranslationManager:
     """
@@ -255,7 +255,7 @@ class TranslationManager:
             self.logger.error("No remaining APIs are available. Exiting.")
             sys.exit(1)
 
-    @versioned("2.9.1")
+    @versioned("2.9.2")
     def translate(self, text: str, languages: List[str], unique_id: str) -> Dict[str, str]:
         """
         Translate the given text into multiple languages.
@@ -292,9 +292,11 @@ class TranslationManager:
             2.12.0 - Refactored to use _get_current_api method and handle API fallback.
             2.12.1 - Added checks for remaining APIs after disabling one.
             2.9.1 - Updated to accept unique_id as a parameter.
+            2.9.2 - Added extraction of translations from nested structure.
         """
         current_api = self.api_connection_manager.get_current_api()
-        self.logger.debug(f"[TRANSLATE] Translating text to {len(languages)} languages: {', '.join(languages)}")
+        self.logger.debug(f"[TRANSLATE] Translating text: {truncate_text(text, 100)}")
+        self.logger.debug(f"[TRANSLATE]       to {len(languages)} languages: {', '.join(languages)}")
         
         if current_api is None:
             self.logger.error("Both APIs are disabled. Unable to translate.")
@@ -302,9 +304,22 @@ class TranslationManager:
 
         try:
             if current_api == 'anthropic':
-                return self._translate_anthropic(text, languages, unique_id)
+                translations = self._translate_anthropic(text, languages, unique_id)
             else:  # current_api == 'openai'
-                return self._translate_openai(text, languages, unique_id)
+                translations = self._translate_openai(text, languages, unique_id)
+            
+            self.logger.debug(f"[TRANSLATE] Received translations: {translations}")
+            
+            # Extract the translations from the nested structure
+            extracted_translations = {}
+            for lang, trans in translations.items():
+                if isinstance(trans, dict):
+                    extracted_translations.update(trans)
+                else:
+                    extracted_translations[lang] = trans
+            
+            self.logger.debug(f"[TRANSLATE] Extracted translations: {extracted_translations}")
+            return extracted_translations
         except Exception as e:
             self.logger.error(f"{current_api.capitalize()} translation failed: {str(e)}")
             self._disable_api(current_api)
@@ -437,8 +452,7 @@ class TranslationManager:
             1.9.8 - Updated signature to remove 'api' parameter.
         """
         language_list = ", ".join(languages)
-        prompt = f"""Translate the following text to {language_list}.
-        Respond only with a JSON object where the key is the unique identifier '{unique_id}' and the value is another JSON object.
+        prompt = f"""Respond only with a JSON object where the key is the unique identifier '{unique_id}' and the value is another JSON object.
         In this inner object, each key should be a language code, and its value should be the translation.
         Do not include the original text or any additional fields in the response. Do not repeat yourself.
         Preserve all '\\n' sequences as they represent linefeeds. Do not convert '\\n' to actual linefeeds.
@@ -452,6 +466,7 @@ class TranslationManager:
             }}
         }}
 
+        Translate the text below to {language_list}.
         Text to translate: {text}"""
         return prompt
 

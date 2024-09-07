@@ -156,6 +156,7 @@ from response_parser import ResponseParser
 from statistics_manager import StatisticsManager
 from token_estimator import TokenEstimator
 from translation_manager import TranslationManager
+from utils import truncate_text
 
 
 @versioned("2.3.1")
@@ -257,8 +258,7 @@ class BatchManager:
               the reliability of the translation API.
         """
         unique_id = self.cache_manager.obtain_id(text)
-        self.logger.debug(f"[BATCH] Starting translation for text: '{text[:50]}...'")
-        self.logger.debug(f"[BATCH] Obtained unique ID: {unique_id}")
+        self.logger.debug(f"[BATCH] Starting translation for text: '{truncate_text(text, 100)}'")
         
         # Check permanent cache first
         cached_translations = self.cache_manager.get(unique_id) or {}
@@ -374,12 +374,16 @@ class BatchManager:
 
         return translations
 
+    
+
+
+
     @versioned("1.0.0")
     def _print_condensed_translations(self, unique_id: str, original_text: str):
         translations = self.cache_manager.get(unique_id)
         if translations:
-            self.logger.info(f"Translations for '{original_text[:30]}...':")
-            self.logger.info(f"  english: {original_text[:30]}...")
+            # Then use it in your logging statement:
+            self.logger.info(f"Translations for '{truncate_text(original_text, 80)}':")
             for lang, trans in translations.items():
                 self.logger.info(f"  {lang}: {trans[:30]}...")
 

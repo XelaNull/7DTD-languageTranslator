@@ -162,6 +162,8 @@ Lessons Learned:
 # Standard library imports
 import pickle
 import threading
+import json
+import base64
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
 import random  # Add this import at the top of the file
@@ -171,7 +173,7 @@ from config import TARGET_LANGUAGES, CACHE_FILE, versioned
 from debug_logging import LTLogger
 from statistics_manager import StatisticsManager
 
-@versioned("2.2.2")
+@versioned("2.3.0")
 class CacheManager:
     """
     Manages caching of translation results.
@@ -230,7 +232,7 @@ class CacheManager:
 
         self.target_languages = TARGET_LANGUAGES
 
-    @versioned("2.0.6")
+    @versioned("2.0.7")
     def _load_cache(self):
         if self.cache_file.exists():
             try:
@@ -250,15 +252,15 @@ class CacheManager:
         else:
             self.logger.info("No existing cache found. Starting with an empty cache.")
 
-    @versioned("2.0.6")
+    @versioned("2.0.7")
     def _save_cache(self):
         try:
             self.cache_file.parent.mkdir(parents=True, exist_ok=True)
             with self.cache_file.open('wb') as f:
                 pickle.dump({
-                    'cache': self.cache,
+                    'cache': self.cache,  # Store the encoded entries directly
                     'used_ids': self.used_ids,
-                    'temp_cache': self.temp_cache,
+                    'temp_cache': self.temp_cache,  # Store the encoded entries directly
                     'text_to_id': self.text_to_id
                 }, f)
         except Exception as e:

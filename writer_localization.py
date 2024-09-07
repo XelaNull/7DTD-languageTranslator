@@ -191,20 +191,16 @@ class LocalizationWriter:
         
         self.logger.debug(f'[WRITER] Writing translations to {output_file}')
         self.logger.debug(f'[WRITER] Number of entries: {len(entries)}')
-        self.logger.debug(f'[WRITER] Number of translations: {len(translations)}')
         
         expected_translation_count = len(entries) * len(TARGET_LANGUAGES)
         actual_translation_count = sum(len(trans) for trans in translations.values())
-        
-        self.logger.info(f'[WRITER] Expected translations: {expected_translation_count}')
-        self.logger.info(f'[WRITER] Actual translations: {actual_translation_count}')
         
         if len(entries) != len(translations):
             self.logger.warning(f'[WRITER] Mismatch in entry count. Entries: {len(entries)}, Translations: {len(translations)}')
             self.logger.warning('[WRITER] Attempting to continue with available translations.')
         
-        if expected_translation_count != actual_translation_count:
-            self.logger.warning(f'[WRITER] Mismatch in translation count. Some entries may be missing translations.')
+        if expected_translation_count > actual_translation_count:
+            self.logger.warning(f'[WRITER] Mismatch in translation count. Some entries may be missing translations. Expected translations: {expected_translation_count} | Actual translations: {actual_translation_count}')
         
         incomplete_entries = []
         complete_count = 0

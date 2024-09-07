@@ -164,6 +164,20 @@ from debug_logging import LTLogger
 # Global flag to indicate if the script should exit
 should_exit = threading.Event()
 
+# Shortens the text to a max length and adds ellipsis if it's too long
+def truncate_text(text, max_length=100):
+        # First, limit to max_length
+        truncated = text[:max_length]
+        # Then, find the last line feed within this truncated text
+        last_lf = truncated.rfind('\n')
+        if last_lf != -1:
+            # If there's a line feed, cut off at that point
+            truncated = truncated[:last_lf]
+        # Add ellipsis if we've truncated the text
+        if len(truncated) < len(text):
+            truncated += '...'
+        return truncated    
+
 @versioned("2.3.0")
 def setup_graceful_shutdown(cleanup_functions: List[Callable], logger: LTLogger):
     def graceful_shutdown(signum, frame):
@@ -264,3 +278,4 @@ def retry_with_exponential_backoff(
                 time.sleep(wait_time)
                 wait_time *= exponential_base
     return wrapper
+

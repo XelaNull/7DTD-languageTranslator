@@ -112,19 +112,19 @@ class ResponseParser:
         self.logger = logger
         self.current_response = ""
         self.error_fragments_dict = {
-            "spanish": "Responder solo con un objeto JSON",
-            "korean": "JSON 객체로만 응답하고",
-            "russian": "Ответьте только объектом JSON",
-            "latam": "Responder solo con un objeto JSON",
-            "italian": "Rispondere solo con un oggetto JSON",
-            "french": "Répondre uniquement avec un objet JSON",
-            "brazilian": "Responder somente com um objeto JSON",
+            "spanish": "con un objeto JSON",
+            "korean": "JSON 객체로만",
+            "russian": "только объектом JSON",
+            "latam": "con un objeto JSON",
+            "italian": "con un oggetto JSON",
+            "french": "avec un objet JSON",
+            "brazilian": "com um objeto JSON",
             "tchinese": "僅通過JSON對象響應",
             "japanese": "JSONオブジェクトでのみ応答してください",
             "schinese": "只能用JSON對象來回答",
             "polish": "Odpowiadaj tylko obiektem JSON",
-            "german": "Antworte nur mit einem JSON-Objekt",
-            "turkish": "Yalnızca JSON nesnesi ile yanıt verin"
+            "german": "mit einem JSON-Objekt",
+            "turkish": "Yalnızca JSON nesnesi ile"
         }
 
 
@@ -175,63 +175,140 @@ class ResponseParser:
         """
         return {lang: trans.rstrip('\n') for lang, trans in translations.items()}
 
-    @versioned("2.1.1")
+    @versioned("2.1.7")
     def _parse_translation_response(self, response: Union[Dict[str, Any], str]) -> Dict[str, str]:
-        self.logger.debug("[PARSER] Parsing translation response")
         try:
             preprocessed_response = self._preprocess_response(response)
             cleaned_response = self._clean_json_string(preprocessed_response)
+            fixed_response = self._fix_incomplete_json(cleaned_response)
             try:
-                parsed_response = json.loads(cleaned_response)
+                parsed_response = json.loads(fixed_response)
+                self.logger.debug(f"[PARSER] Parsed response: {parsed_response}")
             except json.JSONDecodeError as json_error:
                 self.logger.error(f"[PARSER] JSON parsing error: {str(json_error)}")
-                self.logger.error(f"[PARSER] Raw response: {cleaned_response}")
+                self.logger.error(f"[PARSER] Raw response: {fixed_response}")
                 return {}
             
-            self.logger.debug(f"[PARSER] Successfully parsed JSON API Response")
-
+            # Extract translations from the parsed response
+            translations = {}
             if isinstance(parsed_response, dict):
-                if len(parsed_response) == 1:
-                    translations = next(iter(parsed_response.values()))
-                else:
-                    translations = parsed_response
-            else:
-                self.logger.error(f"Unexpected response format: {parsed_response}")
-                return {}
-
-            # Check for error response
-            if self.check_for_error_fragments(translations):
-                self.logger.error("[PARSER] Detected error response, returning empty dictionary")
-                return {}
-
-            # Handle alternative language keys
-            updated_translations = self._handle_alternative_language_keys(translations)
+                for outer_key, outer_value in parsed_response.items():
+                    if isinstance(outer_value, dict):
+                        translations = outer_value
+                        break  # We only expect one unique ID per response
             
-            # Clean translations by removing trailing newlines
-            cleaned_translations = self._clean_translations(updated_translations)
-            
-            return cleaned_translations
+            self.logger.debug(f"[PARSER] Extracted translations: {translations}")
+            return translations
+
         except Exception as e:
             self.logger.error(f"[PARSER] Unexpected error in parsing response: {str(e)}")
             self.logger.error(f"[PARSER] Error details: {traceback.format_exc()}")
-            self.logger.error(f"[PARSER] Raw response: {response}")
             return {}
 
-    @versioned("1.0.0")
+    @versioned("1.2.4")
     def _fix_incomplete_json(self, response: str) -> str:
+        """
+        Attempts to fix and validate an incomplete or malformed JSON string.
+
+        This method expects the input to be a JSON string representing translations,
+        and attempts to fix it to conform to the following structure:
+
+        {
+            "unique_id": {
+                "language_code1": "translation1",
+                "language_code2": "translation2",
+                ...
+            }
+        }
+
+        Where:
+        - "unique_id" is a string of digits representing a unique identifier for this set of translations.
+        - "language_code" is a string representing the language code (e.g., "en", "es", "fr").
+        - "translation" is the translated text for the corresponding language.
+
+        The method will attempt to:
+        1. Parse the JSON as-is first.
+        2. If parsing fails, extract the unique identifier and complete key-value pairs.
+        3. Remove any incomplete entries (e.g., languages without translations).
+        4. Reconstruct the JSON in the correct format.
+        5. Properly encode unicode characters.
+
+        Args:
+            response (str): The potentially incomplete or malformed JSON string.
+
+        Returns:
+            str: A string representing a valid JSON object in the expected format.
+                 If fixing fails, it returns the best attempt at fixing the JSON.
+        """
+        self.logger.debug(f"[PARSER] Attempting to fix incomplete JSON: {response[:100]}...")
+
+        try:
+            # Try to parse the JSON as-is first
+            parsed_json = json.loads(response)
+            self.logger.debug("[PARSER] JSON is already valid")
+            return json.dumps(parsed_json)
+        except json.JSONDecodeError:
+            self.logger.debug("[PARSER] JSON is invalid, attempting to fix")
+
+        def fix_nested_json(json_str):
+            # Fix missing commas between nested objects
+            json_str = re.sub(r'}\s*{', '},{', json_str)
+            
+            # Fix missing commas between key-value pairs
+            json_str = re.sub(r'"\s*}\s*"', '"},"', json_str)
+            
+            # Remove trailing commas in objects
+            json_str = re.sub(r',\s*}', '}', json_str)
+            
+            # Remove trailing commas in arrays
+            json_str = re.sub(r',\s*]', ']', json_str)
+            
+            return json_str
+
+        # Original fix for incomplete entries
         complete_entries = re.findall(r'"(\w+)"\s*:\s*"([^"]*)"', response)
-        if not complete_entries:
-            raise ValueError("No complete language entries found")
+        if complete_entries:
+            fixed_response = '{'
+            for lang, translation in complete_entries[:-1]:
+                fixed_response += f'"{lang}": "{translation}",'
+            fixed_response = fixed_response.rstrip(',') + '}'
+            self.logger.debug(f"[PARSER] Applied original fix. Entries: {len(complete_entries)}")
+        else:
+            fixed_response = response
 
-        fixed_response = '{'
-        for lang, translation in complete_entries[:-1]:
-            fixed_response += f'"{lang}": "{translation}",'
-        fixed_response = fixed_response.rstrip(',') + '}'
+        # Apply nested fixes
+        fixed_response = fix_nested_json(fixed_response)
 
-        self.logger.debug(f"[PARSER] Fixed incomplete JSON. Original entries: {len(complete_entries)}, Used entries: {len(complete_entries) - 1}")
+        # Additional common JSON error fixes
+        try:
+            self.logger.debug("[PARSER] Attempting to fix unquoted keys...")
+            fixed_response = re.sub(r'(\w+)(?=\s*:)', r'"\1"', fixed_response)
+        except Exception as e:
+            self.logger.debug(f"[PARSER] Error fixing unquoted keys: {str(e)}")
+
+        try:
+            self.logger.debug("[PARSER] Attempting to fix single quotes...")
+            fixed_response = fixed_response.replace("'", '"')
+        except Exception as e:
+            self.logger.debug(f"[PARSER] Error fixing single quotes: {str(e)}")
+
+        try:
+            self.logger.debug("[PARSER] Attempting to fix trailing commas in nested structures...")
+            fixed_response = re.sub(r',(\s*[\]}])', r'\1', fixed_response)
+        except Exception as e:
+            self.logger.debug(f"[PARSER] Error fixing trailing commas: {str(e)}")
+
+        # Validate the fixed JSON
+        try:
+            json.loads(fixed_response)
+            self.logger.info("[PARSER] Successfully fixed and validated JSON")
+        except json.JSONDecodeError as e:
+            self.logger.error(f"[PARSER] Failed to fix JSON completely. Error: {str(e)}")
+
+        self.logger.debug(f"[PARSER] Fixed JSON: {fixed_response}")
         return fixed_response
 
-    @versioned("1.6.0")
+    @versioned("1.0.0")
     def _handle_alternative_language_keys(self, translations: Dict[str, str]) -> Dict[str, str]:
         updated_translations = {}
         for target_lang, alternatives in LANGUAGE_ALTERNATIVES.items():
