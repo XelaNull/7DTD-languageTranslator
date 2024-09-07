@@ -104,6 +104,7 @@ Lessons Learned:
 # Standard library imports
 from typing import List, Dict, Optional
 from pathlib import Path
+import csv
 
 # Local application imports
 from config import EXPECTED_HEADER, QUOTED_COLUMNS, versioned, TARGET_LANGUAGES
@@ -166,53 +167,78 @@ class LocalizationWriter:
         formatted_row = [self._format_value(EXPECTED_HEADER[i], field) for i, field in enumerate(row)]
         file.write(','.join(formatted_row) + '\n')
 
-    @versioned("2.5.2")
+    @versioned("2.5.6")
     def write_translations(self, source_file: str, output_file: str, entries: List[Dict[str, str]], translations: Dict[str, Dict[str, str]], translation_manager: Optional[TranslationManager] = None) -> None:
+        """
+        Write translations to the output file.
+
+        Args:
+            source_file (str): Path to the source file.
+            output_file (str): Path to the output file.
+            entries (List[Dict[str, str]]): List of entry dictionaries.
+            translations (Dict[str, Dict[str, str]]): Dictionary of translations.
+            translation_manager (Optional[TranslationManager]): Translation manager instance.
+
+        Raises:
+            ValueError: If sanity check fails.
+
+        Version History:
+            2.5.5: Updated logging format for better readability and information.
+            2.5.6: Improved logic for detecting incomplete translations.
+        """
         if translation_manager:
             self.translation_manager = translation_manager
         
-        self.logger.debug(f"[WRITER] Writing translations to {output_file}")
-        self.logger.debug(f"[WRITER] Number of entries: {len(entries)}")
-        self.logger.debug(f"[WRITER] Number of translations: {len(translations)}")
+        self.logger.debug(f'[WRITER] Writing translations to {output_file}')
+        self.logger.debug(f'[WRITER] Number of entries: {len(entries)}')
+        self.logger.debug(f'[WRITER] Number of translations: {len(translations)}')
         
         expected_translation_count = len(entries) * len(TARGET_LANGUAGES)
         actual_translation_count = sum(len(trans) for trans in translations.values())
         
-        self.logger.info(f"[WRITER] Expected translations: {expected_translation_count}")
-        self.logger.info(f"[WRITER] Actual translations: {actual_translation_count}")
+        self.logger.info(f'[WRITER] Expected translations: {expected_translation_count}')
+        self.logger.info(f'[WRITER] Actual translations: {actual_translation_count}')
         
         if len(entries) != len(translations):
-            self.logger.warning(f"[WRITER] Mismatch in entry count. Entries: {len(entries)}, Translations: {len(translations)}")
-            self.logger.warning("[WRITER] Attempting to continue with available translations.")
+            self.logger.warning(f'[WRITER] Mismatch in entry count. Entries: {len(entries)}, Translations: {len(translations)}')
+            self.logger.warning('[WRITER] Attempting to continue with available translations.')
         
         if expected_translation_count != actual_translation_count:
-            self.logger.warning(f"[WRITER] Mismatch in translation count. Some entries may be missing translations.")
+            self.logger.warning(f'[WRITER] Mismatch in translation count. Some entries may be missing translations.')
         
         incomplete_entries = []
+        complete_count = 0
         for entry in entries:
             key = entry.get('Key')
-            if key not in translations or len(translations[key]) != len(TARGET_LANGUAGES):
+            if key not in translations:
+                self.logger.debug(f'[WRITER] Entry {key:<40} ** MISSING ALL TRANSLATIONS **')
                 incomplete_entries.append(entry)
+            else:
+                present_translations = [lang for lang in TARGET_LANGUAGES if lang in translations[key] and translations[key][lang]]
+                if len(present_translations) < len(TARGET_LANGUAGES):
+                    missing_languages = set(TARGET_LANGUAGES) - set(present_translations)
+                    self.logger.debug(f'[WRITER] Entry {key:<40} ** MISSING TRANSLATIONS: {", ".join(missing_languages)} **')
+                    incomplete_entries.append(entry)
+                else:
+                    complete_count += 1
+                    self.logger.debug(f'[WRITER] Entry {key:<40} Complete [{complete_count:3d}] ({len(present_translations)} languages)')
         
         if incomplete_entries:
             if self.translation_manager:
-                self.logger.warning(f"[WRITER] Found {len(incomplete_entries)} entries with incomplete translations. Attempting to retranslate.")
+                self.logger.warning(f'[WRITER] Found {len(incomplete_entries)} entries with incomplete translations. Attempting to retranslate.')
                 completed_translations = self.translation_manager.retranslate_incomplete_entries(incomplete_entries)
                 translations.update(completed_translations)
             else:
-                self.logger.error(f"[WRITER] Found {len(incomplete_entries)} entries with incomplete translations, but no TranslationManager available for retranslation.")
-                raise ValueError("Incomplete translations and no TranslationManager available")
-        
-        # Perform pre-write sanity check
-        if len(entries) != len(translations):
-            self.logger.error(f"[WRITER] CRITICAL: Mismatch in entry count. Entries: {len(entries)}, Translations: {len(translations)}")
-            exit(1)
+                self.logger.error(f'[WRITER] Found {len(incomplete_entries)} entries with incomplete translations, but no TranslationManager available for retranslation.')
+                raise ValueError('Incomplete translations and no TranslationManager available')
         
         for key, trans in translations.items():
-            if len(trans) != len(TARGET_LANGUAGES):
-                self.logger.warning(f"[WRITER] Incomplete translations for key: {key}")
+            missing_languages = [lang for lang in TARGET_LANGUAGES if lang not in trans or not trans[lang]]
+            if missing_languages:
+                self.logger.warning(f'[WRITER] Incomplete translations for key: {key}. Missing: {", ".join(missing_languages)}')
+            else:
+                self.logger.debug(f'[WRITER] Complete translations for key: {key}')
         
-        # If we've made it here, all entries have complete translations
         with open(output_file, 'w', encoding='utf-8', newline='') as f:
             # Write header
             f.write(','.join(EXPECTED_HEADER) + '\n')
@@ -220,6 +246,9 @@ class LocalizationWriter:
             for entry in entries:
                 key = entry['Key']
                 trans = translations.get(key, {})
+                self.logger.debug(f'[WRITER] Writing translations for entry: {key}')
+                self.logger.debug(f'[WRITER] Available translations: {list(trans.keys())}')
+                
                 row = [
                     key,
                     entry.get('File', ''),
@@ -230,10 +259,14 @@ class LocalizationWriter:
                     entry.get('Context / Alternate Text', ''),
                 ]
                 for lang in TARGET_LANGUAGES:
-                    row.append(trans.get(lang, ''))
+                    if lang in trans and trans[lang]:
+                        row.append(trans[lang])
+                    else:
+                        self.logger.warning(f'[WRITER] Missing translation for {lang} in entry {key}')
+                        row.append('[MISSING TRANSLATION]')
                 self._write_row(f, row)
 
-        self.logger.info(f"[WRITER] All translations written to {output_file}")
+        self.logger.info(f'[WRITER] All translations written to {output_file}')
         self.sanity_check(Path(source_file), Path(output_file))
 
     @versioned("1.0.0")

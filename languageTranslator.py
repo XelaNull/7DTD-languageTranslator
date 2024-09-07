@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-#!/usr/bin/env python3
-
 """
 Language Translator for 7 Days to Die Localization Files
 
@@ -27,9 +25,8 @@ Options:
   --cache-details     Show detailed cache statistics
   --cache-clear N     Clear N random entries from the cache
   --cache-wipe        Wipe the entire cache
-  --cache-performance Display cache performance statistics
 
-Author: Zen Python Master
+Author: Shouden Kalferas
 Version: 1.4.0
 Last Updated: 2024-09-02
 
@@ -85,7 +82,7 @@ Lessons Learned:
    - Consider different logging levels (DEBUG, INFO, WARNING, ERROR) for various scenarios
    - Implement graceful handling of KeyboardInterrupt (CTRL-C) to allow clean script termination:
      def graceful_shutdown(signum, frame):
-         logger.info("Received interrupt signal. Cleaning up...")
+         logger.debug("Received interrupt signal. Cleaning up...")
          cache_manager.save_cache()
          stats_manager.save_stats()
          sys.exit(0)
@@ -151,16 +148,16 @@ Lessons Learned:
    - Implement comprehensive statistics tracking:
      stats_manager.increment_stat('script_execution_count')
    - Generate detailed API usage reports:
-     logger.info(stats_manager.generate_api_usage_report())
+     logger.debug(stats_manager.generate_api_usage_report())
    - Calculate and display API usage averages:
-     logger.info("\n" + stats_manager.calculate_api_averages())
+     logger.debug("\n" + stats_manager.calculate_api_averages())
 
 10. Graceful Shutdown:
     Problem: Risk of data loss during script interruptions
     Solution:
     - Implemented a graceful shutdown mechanism:
       def graceful_shutdown(signum, frame):
-          logger.info("Received interrupt signal. Cleaning up...")
+          logger.debug("Received interrupt signal. Cleaning up...")
           cache_manager.save_cache()
           stats_manager.save_stats()
           sys.exit(0)
@@ -178,6 +175,7 @@ from typing import List, Dict, Any, Optional
 import threading
 import time
 import asyncio
+import functools
 
 # Third-party imports (install via pip)
 from anthropic import Anthropic
@@ -210,9 +208,8 @@ def parse_arguments():
     parser.add_argument("source_path", nargs="?", default=".", help="Source path for Localization.txt files")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--cache-details", action="store_true", help="Show detailed cache statistics")
-    parser.add_argument("--cache-clear", type=int, metavar="N", help="Clear N random entries from the cache")
+    parser.add_argument("--cache-clear-n", type=int, metavar="N", help="Clear N random entries from the cache")
     parser.add_argument("--cache-wipe", action="store_true", help="Wipe the entire cache")
-    parser.add_argument("--cache-performance", action="store_true", help="Display cache performance statistics")
     return parser.parse_args()
 
 @versioned("1.0.2")
@@ -221,7 +218,7 @@ def main():
     logger = LTLogger(__name__)
     logger.set_debug_mode(args.debug)
     
-    logger.info(f"Language Translator v{VERSION} starting up...")
+    logger.debug(f"Language Translator v{VERSION} starting up...")
     check_dependencies(logger)
 
     stats_manager = StatisticsManager(logger, STATS_FILE)
@@ -232,18 +229,14 @@ def main():
         cache_manager.display_cache_details()
         return
 
-    if args.cache_clear:
+    if args.cache_clear_n:
         cache_manager.clear_random_entries(args.cache_clear)
-        logger.info(f"{args.cache_clear} random entries cleared from the cache.")
+        logger.debug(f"{args.cache_clear} random entries cleared from the cache.")
         return
 
     if args.cache_wipe:
         cache_manager.clear_cache()
-        logger.info("Cache wiped completely.")
-        return
-
-    if args.cache_performance:
-        logger.info(stats_manager.calculate_cache_performance())
+        logger.debug("Cache wiped completely.")
         return
 
     # Proceed with translation-related setup
@@ -294,33 +287,33 @@ def main():
         logger.warning(f"No Localization.txt files found in {source_path}")
         return
 
-    logger.info(f"Found {len(localization_files)} Localization.txt files")
+    logger.debug(f"Found {len(localization_files)} Localization.txt files")
 
     file_locator.process_directory(args.source_path)
 
-    logger.info("Main process exiting")
+    logger.debug("Main process exiting")
 
     # Display final statistics and reports
     stats_manager.display_statistics()
-    logger.info("\n" + stats_manager.calculate_api_averages())
-    logger.info(stats_manager.generate_api_usage_report())
+    logger.debug("\n" + stats_manager.calculate_api_averages())
+    logger.debug(stats_manager.generate_api_usage_report())
 
-    logger.info("Translation process completed")
+    logger.debug("Translation process completed")
 
     # Save statistics at the end of the script
     stats_manager.save_stats()
-    logger.info(f"Found {len(localization_files)} Localization.txt files")
+    logger.debug(f"Found {len(localization_files)} Localization.txt files")
 
     file_locator.process_directory(args.source_path)
 
-    logger.info("Main process exiting")
+    logger.debug("Main process exiting")
 
     # Display final statistics and reports
     stats_manager.display_statistics()
-    logger.info("\n" + stats_manager.calculate_api_averages())
-    logger.info(stats_manager.generate_api_usage_report())
+    logger.debug("\n" + stats_manager.calculate_api_averages())
+    logger.debug(stats_manager.generate_api_usage_report())
 
-    logger.info("Translation process completed")
+    logger.debug("Translation process completed")
 
     # Save statistics at the end of the script
     stats_manager.save_stats()

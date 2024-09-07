@@ -52,13 +52,26 @@ Lessons Learned:
     def _parse_localization_file(self, file_path: str):
         with open(file_path, 'r', encoding='utf-8') as f:
             reader = csv.reader(f)
-            next(reader)  # Skip header
+            header = next(reader)  # Skip header
             for row in reader:
-                if len(row) > 5:
-                    yield {
-                        'key': row[0],
-                        'english': row[5]
+                # Check if the row has at least 6 columns (up to and including 'english')
+                if len(row) >= 6:
+                    entry = {
+                        'Key': row[0],
+                        'File': row[1],
+                        'Type': row[2],
+                        'UsedInMainMenu': row[3],
+                        'NoTranslate': row[4],
+                        'english': row[5],
+                        'Context / Alternate Text': row[6] if len(row) > 6 else ''
                     }
+                    # Add translations if they exist
+                    for i, lang in enumerate(header[7:], start=7):
+                        if i < len(row):
+                            entry[lang] = row[i]
+                    yield entry
+                else:
+                    self.logger.warning(f"Skipping malformed row in {file_path}: {row}")
   - This allows for processing files line by line, reducing memory usage
 
 * Problem: Lack of error handling in file processing
@@ -133,9 +146,11 @@ import asyncio
 import concurrent.futures
 from typing import List, Dict, Any
 import traceback
+import functools
 
+# Third-party imports
 # Local application imports
-from config import TARGET_LANGUAGES, versioned, MAX_WORKERS
+from config import TARGET_LANGUAGES, versioned, MAX_WORKERS, deprecated
 from batch_manager import BatchManager  
 from debug_logging import LTLogger
 from writer_localization import LocalizationWriter 
@@ -166,7 +181,8 @@ class FileLocator:
     Methods:
         list_localization_files: Recursively finds all Localization.txt files in a directory.
         process_file: Processes a single Localization.txt file.
-        _parse_localization_file: Parses the content of a Localization.txt file.
+        _is_valid_entry: Checks if an entry has all required fields.
+        _process_entry: Processes a single entry for translation.
         process_directory: Processes all Localization.txt files in a directory.
         _safe_process_file: Wrapper method for safe file processing with error handling.
 
@@ -177,6 +193,8 @@ class FileLocator:
         1.5.0 - Improved parsing of Localization.txt files.
         1.5.1 - Enhanced error reporting and handling during file processing.
         1.5.2 - Removed multithreading support to align with application-wide changes.
+        2.0.0 - Major refactor of process_file method.
+        2.0.1 - Added _is_valid_entry and _process_entry methods for better entry handling.
     """
 
     @versioned("1.5.2")
@@ -197,7 +215,7 @@ class FileLocator:
                     localization_files.append(os.path.join(root, file))
         return localization_files
 
-    @versioned("2.0.0")
+    @versioned("2.0.2")
     def process_file(self, file_path: str):
         self.logger.info(f"Processing file: {file_path}")
         output_file = file_path.replace('.txt', '.translated.txt')
@@ -208,57 +226,54 @@ class FileLocator:
         with open(file_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                key = row.get('Key')
-                if key:
+                if self._is_valid_entry(row):
                     entries.append(row)
+                    # Initialize translations for this entry
+                    translations[row['Key']] = {'english': row['english']}
+                    for lang in TARGET_LANGUAGES:
+                        if lang in row and row[lang]:
+                            translations[row['Key']][lang] = row[lang]
+                else:
+                    self.logger.warning(f"Skipping invalid entry: {row}")
 
-        def process_entry(entry):
-            english_text = entry['english']
-            key = self.batch_manager.cache_manager.obtain_id(english_text)
-            cached_translation = self.batch_manager.cache_manager.get(english_text)
-            
-            if cached_translation:
-                return cached_translation
-
-            new_translation = self.batch_manager.translate_with_batching(english_text)
-            
-            # Filter the translations to include only TARGET_LANGUAGES
-            filtered_translation = {lang: trans for lang, trans in new_translation.items() if lang in TARGET_LANGUAGES}
-
-            if not isinstance(filtered_translation, dict):
-                self.logger.error(f"Invalid translation type: {type(filtered_translation)}. Expected dict.")
-                return {}
-
-            self.batch_manager.cache_manager.set(english_text, filtered_translation)
-            return filtered_translation
+        self.logger.debug(f"[FILE_LOCATOR] Parsed {len(entries)} entries from {file_path}")
+        self.logger.debug(f"[FILE_LOCATOR] Sample entry: {entries[0] if entries else 'No entries found'}")
 
         for entry in entries:
-            translation = process_entry(entry)
-            translations[entry['Key']] = translation
+            if not all(lang in translations[entry['Key']] and translations[entry['Key']][lang] not in (None, '') for lang in TARGET_LANGUAGES):
+                new_translations = self._process_entry(entry)
+                translations[entry['Key']].update(new_translations)
         
-        self.logger.debug(f"[FILE_LOCATOR] Entries: {entries[:5]}...")  # Log the first 5 entries for debugging
-        self.logger.debug(f"[FILE_LOCATOR] Translations: {list(translations.keys())[:5]}...")  # Log the first 5 translation keys for debugging
+        self.logger.debug(f"[FILE_LOCATOR] Translations: {list(translations.keys())[:5]}...")
         
         localization_writer = LocalizationWriter(self.logger, self.translation_manager)
         localization_writer.write_translations(file_path, output_file, entries, translations)
         
         self.logger.info(f"Translations written to {output_file}")
 
-    @versioned("1.4.0")
-    def _parse_localization_file(self, file_path: str) -> List[Dict[str, str]]:
-        entries = []
-        with open(file_path, 'r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            next(reader)  # Skip header
-            for row in reader:
-                if len(row) > 5:
-                    entries.append({
-                        'key': row[0],
-                        'english': row[5]
-                    })
-        self.logger.debug(f"Parsed {len(entries)} entries from {file_path}")
-        self.logger.debug(f"Sample entry: {entries[0] if entries else 'No entries found'}")
-        return entries
+    def _is_valid_entry(self, row):
+        required_fields = ['Key', 'File', 'Type', 'UsedInMainMenu', 'NoTranslate', 'english']
+        return all(field in row and row[field] is not None for field in required_fields)
+
+    def _process_entry(self, entry):
+        english_text = entry['english']
+        key = self.batch_manager.cache_manager.obtain_id(english_text)
+        cached_translation = self.batch_manager.cache_manager.get(english_text)
+        
+        if cached_translation:
+            return cached_translation
+
+        new_translation = self.batch_manager.translate_with_batching(english_text)
+        
+        # Filter the translations to include only TARGET_LANGUAGES
+        filtered_translation = {lang: trans for lang, trans in new_translation.items() if lang in TARGET_LANGUAGES}
+
+        if not isinstance(filtered_translation, dict):
+            self.logger.error(f"Invalid translation type: {type(filtered_translation)}. Expected dict.")
+            return {}
+
+        self.batch_manager.cache_manager.set(english_text, filtered_translation)
+        return filtered_translation
 
     @versioned("1.5.2")
     def process_directory(self, directory: str):
@@ -280,3 +295,53 @@ class FileLocator:
         except Exception as e:
             self.logger.error(f"Error processing file {file_path}: {str(e)}")
             self.logger.error(f"Exception details: {traceback.format_exc()}")
+
+    @deprecated
+    def _parse_localization_file(self, file_path: str):
+        entries = []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            header = next(reader)  # Skip header
+            for row in reader:
+                # Check if the row has at least 6 columns (up to and including 'english')
+                if len(row) >= 6:
+                    entry = {
+                        'Key': row[0],
+                        'File': row[1],
+                        'Type': row[2],
+                        'UsedInMainMenu': row[3],
+                        'NoTranslate': row[4],
+                        'english': row[5],
+                        'Context / Alternate Text': row[6] if len(row) > 6 else ''
+                    }
+                    # Add translations if they exist
+                    for i, lang in enumerate(header[7:], start=7):
+                        if i < len(row):
+                            entry[lang] = row[i]
+                    yield entry
+                else:
+                    self.logger.warning(f"[FILE_LOCATOR] Skipping malformed row in {file_path}: {row}")
+        self.logger.debug(f"[FILE_LOCATOR] Parsed {len(entries)} entries from {file_path}")
+        self.logger.debug(f"[FILE_LOCATOR] Sample entry: {entries[0] if entries else 'No entries found'}")
+        return entries
+
+    @deprecated
+    def process_directory(self, directory: str):
+        localization_files = self.list_localization_files(directory)
+        self.logger.info(f"Found {len(localization_files)} Localization.txt files")
+
+        for file_path in localization_files:
+            if check_exit_flag():
+                self.logger.info("Exiting file processing due to interrupt")
+                break
+            self._safe_process_file(file_path)
+
+    @deprecated
+    def _safe_process_file(self, file_path: str):
+        if check_exit_flag():
+            return
+        try:
+            self.process_file(file_path)
+        except Exception as e:
+            self.logger.error(f"Error processing file {file_path}: {str(e)}")
+            self.logger.error(f"Exception details: {traceback.format_exc()}")        

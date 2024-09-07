@@ -112,7 +112,8 @@ Lessons Learned:
 # Standard library imports
 from pathlib import Path
 import os
-from functools import wraps
+import functools
+import warnings
 
 # Version information
 VERSION = "1.0.0"
@@ -211,10 +212,16 @@ def versioned(version: str):
         Callable: Decorated function with version information.
     """
     def decorator(func):
-        @wraps(func)
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             return func(*args, **kwargs)
         wrapper.__version__ = version
         return wrapper
     return decorator
 
+def deprecated(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        warnings.warn(f"Function {func.__name__} is deprecated", DeprecationWarning, stacklevel=2)
+        return func(*args, **kwargs)
+    return wrapper

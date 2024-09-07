@@ -238,8 +238,6 @@ class ResponseParser:
             for alt in alternatives:
                 if alt in translations:
                     updated_translations[target_lang] = translations[alt]
-                    if alt != target_lang:
-                        self.logger.debug(f"Used alternative key '{alt}' for language '{target_lang}'")
                     break
             else:
                 if target_lang in translations:
